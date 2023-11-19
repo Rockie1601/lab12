@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
 
-// Define a structure to hold the thread-specific data
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Define a structure to hold thread-specific data
 struct ThreadData {
     double *a;
     double sum;
@@ -11,86 +14,77 @@ struct ThreadData {
     long tid;
 };
 
-// Thread function to calculate the sum for a specific range
-void *calculateSum(void *threadArg) {
-    struct ThreadData *myData = (struct ThreadData *)threadArg;
+void *compute(void *arg) {
+    struct ThreadData *myData = (struct ThreadData *)arg;
 
-    int start = myData->tid * myData->size;
-    int end = start + myData->size;
+    int myStart, myEnd, myN, i;
 
-    for (int i = start; i < end; ++i) {
-        myData->sum += myData->a[i];
-    }
+    // Determine start and end of computation for the current thread
+    myN = myData->N / myData->size;
+    myStart = myData->tid * myN;
+    myEnd = myStart + myN;
+    if (myData->tid == (myData->size - 1))
+        myEnd = myData->N;
 
-    pthread_exit(NULL);
+    // Compute partial sum
+    double mySum = 0.0;
+    for (i = myStart; i < myEnd; i++)
+        mySum += myData->a[i];
+
+    // Grab the lock, update global sum, and release lock
+    pthread_mutex_lock(&mutex);
+    myData->sum += mySum;
+    pthread_mutex_unlock(&mutex);
+
+    return NULL;
 }
 
-int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s <array_size> <num_threads>\n", argv[0]);
-        exit(EXIT_FAILURE);
+int main(int argc, char **argv) {
+    long i;
+    pthread_t *tid;
+
+    if (argc != 3) {
+        printf("Usage: %s <# of elements> <# of threads>\n", argv[0]);
+        exit(-1);
     }
 
-    int N = atoi(argv[1]);
-    int num_threads = atoi(argv[2]);
+    int N = atoi(argv[1]);   // no. of elements
+    int size = atoi(argv[2]); // no. of threads
 
-    // Allocate memory for the array
-    double *a = (double *)malloc(N * sizeof(double));
-    if (a == NULL) {
-        perror("Error in malloc");
-        exit(EXIT_FAILURE);
-    }
+    // Allocate vector and initialize
+    tid = (pthread_t *)malloc(sizeof(pthread_t) * size);
+    struct ThreadData *threadDataArray = (struct ThreadData *)malloc(sizeof(struct ThreadData) * size);
 
-    // Initialize the array with some values
-    for (int i = 0; i < N; ++i) {
-        a[i] = i + 1;
-    }
-
-    // Create an array of thread structures
-    struct ThreadData *threadDataArray = (struct ThreadData *)malloc(num_threads * sizeof(struct ThreadData));
-    if (threadDataArray == NULL) {
-        perror("Error in malloc");
-        exit(EXIT_FAILURE);
-    }
-
-    // Create pthread_t array to store thread IDs
-    pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
-    if (threads == NULL) {
-        perror("Error in malloc");
-        exit(EXIT_FAILURE);
-    }
-
-    // Calculate the size of each thread's workload
-    int size = N / num_threads;
+    double *a = (double *)malloc(sizeof(double) * N);
+    for (i = 0; i < N; i++)
+        a[i] = (double)(i + 1);
 
     // Create threads
-    for (long i = 0; i < num_threads; ++i) {
+    for (i = 0; i < size; i++) {
         threadDataArray[i].a = a;
         threadDataArray[i].sum = 0.0;
         threadDataArray[i].N = N;
         threadDataArray[i].size = size;
         threadDataArray[i].tid = i;
 
-        pthread_create(&threads[i], NULL, calculateSum, (void *)&threadDataArray[i]);
+        pthread_create(&tid[i], NULL, compute, (void *)&threadDataArray[i]);
     }
 
-    // Wait for threads to finish
-    for (long i = 0; i < num_threads; ++i) {
-        pthread_join(threads[i], NULL);
-    }
+    // Wait for them to complete
+    for (i = 0; i < size; i++)
+        pthread_join(tid[i], NULL);
 
-    // Calculate the total sum
+    // Calculate and print the total sum
     double totalSum = 0.0;
-    for (long i = 0; i < num_threads; ++i) {
+    for (i = 0; i < size; i++)
         totalSum += threadDataArray[i].sum;
-    }
 
-    printf("Total sum: %f\n", totalSum);
+    printf("The total is %g, it should be equal to %g\n", totalSum, ((double)N * (N + 1)) / 2);
 
-    // Free allocated memory
-    free(a);
+    // Clean up allocated memory
+    free(tid);
     free(threadDataArray);
-    free(threads);
+    free(a);
 
     return 0;
 }
